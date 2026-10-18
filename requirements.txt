@@ -1,3 +1,4 @@
 Pillow>=11.0
 pillow-heif>=0.20
 comtypes>=1.4
+pdf2docx>=0.5.8

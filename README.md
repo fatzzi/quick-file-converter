@@ -9,11 +9,26 @@ the picker.
 
 | From | To |
 |---|---|
+| DOC, DOCX, RTF, ODT (Word documents) | PDF, DOCX |
+| PDF | DOCX (editable Word document) |
 | PNG, JPG, WEBP, BMP, GIF, TIFF, ICO, HEIC (iPhone photos) | PNG, JPG, WEBP, ICO, PDF, GIF |
 | MP4, MOV, MKV, AVI, WEBM, ... | MP4, GIF, MP3, WAV, M4A |
 | MP3, WAV, M4A, OGG, FLAC, ... | MP3, WAV, M4A |
 
 Formats that don't fit the selected files are greyed out.
+
+Documents don't need Microsoft Word:
+
+- **PDF -> DOCX** uses [pdf2docx](https://github.com/ArtifexSoftware/pdf2docx)
+  (installed with ShiftDrop). Text, tables and images come across as editable
+  content. A scanned PDF (pages that are just photos) becomes a DOCX of
+  images, because there is no text in it to recover.
+- **DOC/DOCX -> PDF** (and old DOC -> DOCX) uses the free
+  [LibreOffice](https://www.libreoffice.org/), running hidden in the
+  background. `install.bat` offers to install it, or run
+  `winget install TheDocumentFoundation.LibreOffice`.
+- The first document conversion after starting takes a few extra seconds
+  while LibreOffice starts up.
 
 Q only opens the picker while Explorer's file list or the desktop is focused.
 Typing Q anywhere else - other apps, the Explorer address bar or search box,
@@ -45,5 +60,5 @@ shortcut point at the old location). Problems are written to `shiftdrop.log`.
 ## Files
 
 - `shiftdrop.py` - the whole app (Q hotkey, format picker, converters)
-- `requirements.txt` - Python packages: Pillow, pillow-heif, comtypes
+- `requirements.txt` - Python packages: Pillow, pillow-heif, comtypes, pdf2docx
 - `install.bat`, `start.bat`, `stop.bat`, `uninstall.bat` - helpers above

@@ -24,7 +24,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 echo Installing packages...
 ".venv\Scripts\python.exe" -m pip install --disable-pip-version-check -q -r requirements.txt || goto :fail
-".venv\Scripts\python.exe" -c "import PIL, pillow_heif, comtypes.client" || goto :fail
+".venv\Scripts\python.exe" -c "import PIL, pillow_heif, comtypes.client, pdf2docx" || goto :fail
 echo Packages OK.
 
 if defined QUIET goto :done
@@ -35,6 +35,17 @@ if errorlevel 1 (
     echo ffmpeg is not installed. It is only needed for video and audio files.
     choice /c YN /m "Install ffmpeg now with winget"
     if not errorlevel 2 winget install --id Gyan.FFmpeg -e --accept-package-agreements
+)
+
+set HAVE_LO=
+if exist "%ProgramFiles%\LibreOffice\program\soffice.exe" set HAVE_LO=1
+if exist "%ProgramFiles(x86)%\LibreOffice\program\soffice.exe" set HAVE_LO=1
+if not defined HAVE_LO (
+    echo.
+    echo LibreOffice is not installed. It is free, and only needed to turn
+    echo Word documents ^(DOC/DOCX^) into PDF. PDF to DOCX works without it.
+    choice /c YN /m "Install LibreOffice now with winget (about 350 MB)"
+    if not errorlevel 2 winget install --id TheDocumentFoundation.LibreOffice -e --accept-package-agreements
 )
 
 echo.

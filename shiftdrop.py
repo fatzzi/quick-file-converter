@@ -12,10 +12,12 @@ Esc or a click anywhere else closes the picker.
 import ctypes
 import ctypes.wintypes as wt
 import os
+import pathlib
 import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import tkinter as tk
@@ -49,20 +51,24 @@ IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff",
              ".ico", ".heic", ".heif"}
 VIDEO_EXT = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".wmv", ".flv", ".m4v"}
 AUDIO_EXT = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".opus", ".wma"}
+DOCUMENT_EXT = {".doc", ".docx", ".rtf", ".odt"}   # converted by LibreOffice
+PDF_EXT = {".pdf"}
 
 # (label, output extension, kinds of input it accepts)
 TARGETS = [
+    ("PDF", ".pdf", {"image", "document"}),
+    ("DOCX", ".docx", {"pdf", "document"}),
     ("PNG", ".png", {"image"}),
     ("JPG", ".jpg", {"image"}),
     ("WEBP", ".webp", {"image"}),
     ("ICO", ".ico", {"image"}),
-    ("PDF", ".pdf", {"image"}),
     ("GIF", ".gif", {"image", "video"}),
     ("MP4", ".mp4", {"video"}),
     ("MP3", ".mp3", {"video", "audio"}),
     ("WAV", ".wav", {"video", "audio"}),
     ("M4A", ".m4a", {"video", "audio"}),
 ]
+COLUMNS = 6
 
 BG, TILE, TILE_HOT, TILE_OFF, FG, FG_OFF = (
     "#1e1e24", "#34343e", "#ff8a3d", "#26262c", "#f2f2f2", "#666670")
@@ -259,6 +265,10 @@ def kind_of(path):
         return "video"
     if ext in AUDIO_EXT:
         return "audio"
+    if ext in DOCUMENT_EXT:
+        return "document"
+    if ext in PDF_EXT:
+        return "pdf"
     return None
 
 
@@ -337,6 +347,68 @@ def convert_media(src, dst, ext):
         raise RuntimeError(result.stderr.strip()[-400:] or "ffmpeg failed")
 
 
+def find_soffice():
+    for base in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
+        if base:
+            path = os.path.join(base, "LibreOffice", "program", "soffice.exe")
+            if os.path.exists(path):
+                return path
+    return shutil.which("soffice")
+
+
+# LibreOffice keeps its settings here, apart from any LibreOffice you have
+# open yourself, so a conversion never collides with it.
+LO_PROFILE = os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()),
+                          "ShiftDrop", "libreoffice-profile")
+LO_FILTERS = {".pdf": "pdf", ".docx": "docx:MS Word 2007 XML"}
+
+
+def convert_pdf_to_docx(src, out):
+    from pdf2docx import Converter
+    cv = Converter(src)
+    try:
+        cv.convert(out)
+    finally:
+        cv.close()
+
+
+def convert_with_libreoffice(src, out_dir, ext):
+    soffice = find_soffice()
+    if not soffice:
+        raise RuntimeError("LibreOffice is needed for Word documents - install it with:\n"
+                           "winget install TheDocumentFoundation.LibreOffice")
+    profile = pathlib.Path(LO_PROFILE).as_uri()
+    result = subprocess.run(
+        [soffice, f"-env:UserInstallation={profile}", "--headless", "--norestore",
+         "--convert-to", LO_FILTERS[ext], "--outdir", out_dir, src],
+        capture_output=True, text=True, timeout=300,
+        creationflags=subprocess.CREATE_NO_WINDOW)
+    out = os.path.join(out_dir, os.path.splitext(os.path.basename(src))[0] + ext)
+    if not os.path.exists(out):
+        raise RuntimeError("LibreOffice couldn't convert it: "
+                           + (result.stderr.strip()[-300:] or f"exit code {result.returncode}"))
+    return out
+
+
+def convert_office(src, dst, ext):
+    """PDF -> DOCX with pdf2docx; DOC/DOCX/RTF/ODT -> PDF or DOCX with LibreOffice."""
+    # both tools pick the format from the file name, so work in a temp folder
+    # under real names and move the result into place at the end
+    out_dir = tempfile.mkdtemp(prefix="shiftdrop-")
+    try:
+        if kind_of(src) == "pdf":
+            out = os.path.join(out_dir, "out.docx")
+            try:
+                convert_pdf_to_docx(src, out)
+            except Exception as exc:
+                raise RuntimeError(f"couldn't read this PDF ({exc})")
+        else:
+            out = convert_with_libreoffice(src, out_dir, ext)
+        shutil.move(out, dst)
+    finally:
+        shutil.rmtree(out_dir, ignore_errors=True)
+
+
 def convert(src, ext):
     """Convert one file, return the output path. Raises on failure."""
     kind = kind_of(src)
@@ -356,6 +428,8 @@ def convert(src, ext):
             convert_image(src, tmp, ext)
         elif kind in ("video", "audio"):
             convert_media(src, tmp, ext)
+        elif kind in ("document", "pdf"):
+            convert_office(src, tmp, ext)
         else:
             raise RuntimeError("unsupported file type")
         os.replace(tmp, dst)
@@ -378,18 +452,18 @@ class ShiftDrop:
 
         self.status = tk.Label(self.root, text="", bg=BG, fg=FG_OFF,
                                font=("Segoe UI", 9))
-        self.status.grid(row=0, column=0, columnspan=5, pady=(8, 2))
+        self.status.grid(row=0, column=0, columnspan=COLUMNS, pady=(8, 2))
         self.tiles = []  # (label, ext, kinds)
         for i, (name, ext, kinds) in enumerate(TARGETS):
             lbl = tk.Label(self.root, text=name, width=6, height=2, bg=TILE, fg=FG,
                            font=("Segoe UI Semibold", 11), cursor="hand2")
-            lbl.grid(row=1 + i // 5, column=i % 5, padx=4, pady=4)
+            lbl.grid(row=1 + i // COLUMNS, column=i % COLUMNS, padx=4, pady=4)
             lbl.bind("<Enter>", lambda e, l=lbl: self.on_hover(l, True))
             lbl.bind("<Leave>", lambda e, l=lbl: self.on_hover(l, False))
             lbl.bind("<ButtonRelease-1>", lambda e, x=ext: self.on_pick(x))
             self.tiles.append((lbl, ext, kinds))
         tk.Label(self.root, text="Esc to close", bg=BG, fg=FG_OFF,
-                 font=("Segoe UI", 8)).grid(row=3, column=0, columnspan=5, pady=(0, 6))
+                 font=("Segoe UI", 8)).grid(row=3, column=0, columnspan=COLUMNS, pady=(0, 6))
 
         self.selection = Selection()
         self.pending_hwnd = None   # set by the hook thread, read by poll()
@@ -494,6 +568,8 @@ class ShiftDrop:
     def work(self, files, ext):
         done, errors = [], []
         for path in files:
+            if os.path.splitext(path)[1].lower().replace(".jpeg", ".jpg") == ext:
+                continue  # mixed selection: this one is already in that format
             try:
                 done.append(convert(path, ext))
             except Exception as exc:  # report every failure, keep going

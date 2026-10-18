@@ -114,6 +114,10 @@ def find_ffmpeg():
 
 FFMPEG = find_ffmpeg()
 
+PIL_FORMATS = {".png": "PNG", ".webp": "WEBP", ".gif": "GIF", ".bmp": "BMP"}
+FFMPEG_FORMATS = {".mp4": "mp4", ".gif": "gif", ".mp3": "mp3", ".wav": "wav",
+                  ".m4a": "ipod"}
+
 
 def free_name(src, ext):
     stem = os.path.splitext(src)[0]
@@ -134,14 +138,15 @@ def convert_image(src, dst, ext):
             img = flat
         else:
             img = img.convert("RGB")
+    # the format is always given explicitly: dst is a ".part" temp name
     if ext == ".jpg":
         img.save(dst, "JPEG", quality=92)
     elif ext == ".ico":
-        img.save(dst, sizes=[(s, s) for s in (16, 32, 48, 64, 128, 256)])
+        img.save(dst, "ICO", sizes=[(s, s) for s in (16, 32, 48, 64, 128, 256)])
     elif ext == ".pdf":
         img.save(dst, "PDF", resolution=150)
     else:
-        img.save(dst)
+        img.save(dst, PIL_FORMATS[ext])
 
 
 def convert_media(src, dst, ext):
@@ -161,7 +166,8 @@ def convert_media(src, dst, ext):
     else:  # .wav
         args = ["-vn"]
     result = subprocess.run(
-        [FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-i", src, *args, dst],
+        [FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-i", src, *args,
+         "-f", FFMPEG_FORMATS[ext], dst],
         capture_output=True, text=True,
         creationflags=subprocess.CREATE_NO_WINDOW)
     if result.returncode != 0:
@@ -177,14 +183,22 @@ def convert(src, ext):
     if not any(e == ext and kind in kinds for _n, e, kinds in TARGETS):
         raise RuntimeError(f"can't make {ext.lstrip('.').upper()} from this file")
     dst = free_name(src, ext)
-    if kind == "image":
-        if Image is None:
-            raise RuntimeError("Pillow is not installed")
-        convert_image(src, dst, ext)
-    elif kind in ("video", "audio"):
-        convert_media(src, dst, ext)
-    else:
-        raise RuntimeError("unsupported file type")
+    # Write under a ".part" name and rename at the end, so Explorer never sees
+    # (and tries to thumbnail) a half-written image or video.
+    tmp = dst + ".part"
+    try:
+        if kind == "image":
+            if Image is None:
+                raise RuntimeError("Pillow is not installed")
+            convert_image(src, tmp, ext)
+        elif kind in ("video", "audio"):
+            convert_media(src, tmp, ext)
+        else:
+            raise RuntimeError("unsupported file type")
+        os.replace(tmp, dst)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
     return dst
 
 
@@ -284,17 +298,22 @@ class ShiftDrop:
         lbl.configure(bg=TILE, fg=FG)
 
     def on_drop(self, event, ext, kinds):
+        # Explorer is blocked inside its drag-and-drop call until this returns,
+        # so answer at once and do the window work (hide, toast) afterwards.
         files = self.paths(event)
-        self.hide()
         if not files:
             return "refuse_drop"
         bad = [p for p in files if kind_of(p) not in kinds]
         if bad:
-            self.notify(f"Can't make {ext[1:].upper()} from {os.path.basename(bad[0])}", error=True)
+            msg = f"Can't make {ext[1:].upper()} from {os.path.basename(bad[0])}"
+            self.root.after(150, self.notify, msg, True)
             return "refuse_drop"
+        self.root.after(150, self.start_work, files, ext)
+        return "copy"  # never "move" - the original stays where it was
+
+    def start_work(self, files, ext):
         self.notify(f"Converting {len(files)} file(s) to {ext[1:].upper()}...")
         threading.Thread(target=self.work, args=(files, ext), daemon=True).start()
-        return "copy"  # never "move" - the original stays where it was
 
     def work(self, files, ext):
         done, errors = [], []

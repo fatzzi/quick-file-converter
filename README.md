@@ -1,10 +1,11 @@
 # ShiftDrop
 
-Drag a file in File Explorer (or on the desktop), hold **Shift**, and a format
-picker pops up next to the cursor. Drop the file on a format; the converted copy
-is saved next to the original (`photo.heic` -> `photo.jpg`). The original is
+Select one or more files in File Explorer (or on the desktop) and press **Q**.
+A format picker pops up at the mouse; click a format and converted copies are
+saved next to the originals (`photo.heic` -> `photo.jpg`). The originals are
 never moved or changed, and existing files are never overwritten
-(`photo (1).jpg` is used instead).
+(`photo (1).jpg` is used instead). Esc, Q again, or a click anywhere else closes
+the picker.
 
 | From | To |
 |---|---|
@@ -12,8 +13,13 @@ never moved or changed, and existing files are never overwritten
 | MP4, MOV, MKV, AVI, WEBM, ... | MP4, GIF, MP3, WAV, M4A |
 | MP3, WAV, M4A, OGG, FLAC, ... | MP3, WAV, M4A |
 
-Formats that don't fit the file you're dragging turn grey when you hover them.
-You can drop several files at once.
+Formats that don't fit the selected files are greyed out.
+
+Q only opens the picker while Explorer's file list or the desktop is focused.
+Typing Q anywhere else - other apps, the Explorer address bar or search box,
+or while renaming a file - types a Q as normal. (Inside the file list, Q no
+longer jumps to files starting with "q".) To use another key, change
+`HOTKEY_VK` at the top of `shiftdrop.py`.
 
 ## Install
 
@@ -34,10 +40,10 @@ Needs Windows 10/11 and [Python 3.10+](https://www.python.org/downloads/).
 | `uninstall.bat` | stop it and remove it from Windows startup |
 
 If you move this folder, run `install.bat` again (the `.venv` and the startup
-shortcut point at the old location).
+shortcut point at the old location). Problems are written to `shiftdrop.log`.
 
 ## Files
 
-- `shiftdrop.py` - the whole app (mouse/Shift watcher, format picker, converters)
-- `requirements.txt` - Python packages: Pillow, pillow-heif, tkinterdnd2
+- `shiftdrop.py` - the whole app (Q hotkey, format picker, converters)
+- `requirements.txt` - Python packages: Pillow, pillow-heif, comtypes
 - `install.bat`, `start.bat`, `stop.bat`, `uninstall.bat` - helpers above

@@ -1,8 +1,9 @@
-"""ShiftDrop - drag a file in Explorer, hold Shift, drop it on a format to convert it.
+"""ShiftDrop - select files in Explorer, press Q, click a format to convert them.
 
-Runs in the background. While you drag a file from Explorer or the desktop with
-Shift held, a format picker pops up at the cursor. Drop the file on a format and
-the converted copy is written next to the original (the original is untouched).
+Runs in the background. Select one or more files in File Explorer or on the
+desktop and press Q: a format picker pops up at the mouse. Click a format and
+converted copies are written next to the originals (the originals are untouched).
+Esc or a click anywhere else closes the picker.
 
     pythonw shiftdrop.py          start (no console)
     python  shiftdrop.py --quit   stop a running instance
@@ -16,9 +17,11 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 
-from tkinterdnd2 import DND_FILES, TkinterDnD
+import comtypes.client
+import comtypes.client.dynamic
 
 try:
     from PIL import Image
@@ -32,12 +35,15 @@ except ImportError:
 
 # ---------------------------------------------------------------- settings ---
 
-# Only pop up for drags that start in these windows (Explorer + desktop), so
-# Shift-select drags in editors and browsers are left alone.
-DRAG_SOURCE_CLASSES = {"CabinetWClass", "ExploreWClass", "Progman", "WorkerW"}
-MIN_DRAG_PX = 12          # mouse must travel this far before we react
+HOTKEY_VK = 0x51          # Q  (virtual-key code; e.g. 0x43 for C)
+# Q only opens the picker while one of these windows is in front ...
+EXPLORER_CLASSES = {"CabinetWClass", "ExploreWClass", "Progman", "WorkerW"}
+# ... and the file list itself has focus, so typing a Q in the address bar,
+# search box or while renaming a file still types a Q.
+FILE_LIST_FOCUS = {"DirectUIHWND", "SysListView32"}
 POLL_MS = 30
 CONTROL_PORT = 47821      # localhost port used for single-instance / --quit
+LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shiftdrop.log")
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff",
              ".ico", ".heic", ".heif"}
@@ -61,11 +67,48 @@ TARGETS = [
 BG, TILE, TILE_HOT, TILE_OFF, FG, FG_OFF = (
     "#1e1e24", "#34343e", "#ff8a3d", "#26262c", "#f2f2f2", "#666670")
 
+
+def log(msg):
+    try:
+        if os.path.exists(LOG_PATH) and os.path.getsize(LOG_PATH) > 200_000:
+            os.remove(LOG_PATH)
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n")
+    except OSError:
+        pass
+
+
 # ------------------------------------------------------------- win32 bits ---
 
 user32 = ctypes.windll.user32
-VK_LBUTTON, VK_SHIFT = 0x01, 0x10
+kernel32 = ctypes.windll.kernel32
+VK_LBUTTON, VK_ESCAPE = 0x01, 0x1B
+MODIFIER_VKS = (0x10, 0x11, 0x12, 0x5B, 0x5C)  # Shift, Ctrl, Alt, Win L/R
 GA_ROOT = 2
+WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN = 13, 0x100, 0x101, 0x104
+
+LRESULT = ctypes.c_ssize_t
+HOOKPROC = ctypes.WINFUNCTYPE(LRESULT, ctypes.c_int, wt.WPARAM, wt.LPARAM)
+user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wt.HINSTANCE, wt.DWORD]
+user32.SetWindowsHookExW.restype = ctypes.c_void_p
+user32.CallNextHookEx.argtypes = [ctypes.c_void_p, ctypes.c_int, wt.WPARAM, wt.LPARAM]
+user32.CallNextHookEx.restype = LRESULT
+kernel32.GetModuleHandleW.restype = wt.HMODULE
+user32.GetForegroundWindow.restype = wt.HWND
+user32.GetAncestor.restype = wt.HWND
+user32.WindowFromPoint.restype = wt.HWND
+
+
+class KBDLLHOOKSTRUCT(ctypes.Structure):
+    _fields_ = [("vkCode", wt.DWORD), ("scanCode", wt.DWORD), ("flags", wt.DWORD),
+                ("time", wt.DWORD), ("dwExtraInfo", ctypes.c_size_t)]
+
+
+class GUITHREADINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wt.DWORD), ("flags", wt.DWORD), ("hwndActive", wt.HWND),
+                ("hwndFocus", wt.HWND), ("hwndCapture", wt.HWND),
+                ("hwndMenuOwner", wt.HWND), ("hwndMoveSize", wt.HWND),
+                ("hwndCaret", wt.HWND), ("rcCaret", wt.RECT)]
 
 
 def key_down(vk):
@@ -78,12 +121,132 @@ def cursor_pos():
     return pt.x, pt.y
 
 
-def window_class_at(x, y):
-    hwnd = user32.WindowFromPoint(wt.POINT(x, y))
-    root = user32.GetAncestor(hwnd, GA_ROOT) or hwnd
+def class_name(hwnd):
     buf = ctypes.create_unicode_buffer(256)
-    user32.GetClassNameW(root, buf, 256)
+    user32.GetClassNameW(hwnd, buf, 256)
     return buf.value
+
+
+def window_title(hwnd):
+    buf = ctypes.create_unicode_buffer(512)
+    user32.GetWindowTextW(hwnd, buf, 512)
+    return buf.value
+
+
+def focused_class(hwnd):
+    tid = user32.GetWindowThreadProcessId(hwnd, None)
+    gi = GUITHREADINFO(cbSize=ctypes.sizeof(GUITHREADINFO))
+    if not user32.GetGUIThreadInfo(tid, ctypes.byref(gi)) or not gi.hwndFocus:
+        return ""
+    return class_name(gi.hwndFocus)
+
+
+class HotkeyHook(threading.Thread):
+    """Low-level keyboard hook on its own thread (it needs a message loop).
+
+    When Q is pressed with Explorer's file list focused, the key is swallowed
+    (so Explorer doesn't jump to a file starting with "q") and the Explorer
+    window is handed to `on_hotkey`. Every other key passes straight through.
+    """
+
+    def __init__(self, on_hotkey, on_escape):
+        super().__init__(daemon=True)
+        self.on_hotkey = on_hotkey
+        self.on_escape = on_escape
+        self.held = False  # swallow auto-repeat while Q is held down
+        self.proc = HOOKPROC(self.callback)  # keep a reference alive
+
+    def callback(self, code, wparam, lparam):
+        try:
+            if code == 0:
+                kb = ctypes.cast(lparam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+                if kb.vkCode == VK_ESCAPE and wparam == WM_KEYDOWN:
+                    self.on_escape()  # Esc still reaches the app underneath
+                elif kb.vkCode == HOTKEY_VK:
+                    if wparam == WM_KEYUP and self.held:
+                        self.held = False
+                        return 1
+                    if wparam in (WM_KEYDOWN, WM_SYSKEYDOWN):
+                        if self.held:
+                            return 1
+                        hwnd = self.explorer_target()
+                        if hwnd:
+                            self.held = True
+                            self.on_hotkey(hwnd)
+                            return 1
+        except Exception as exc:  # never let an error break the keyboard
+            log(f"hook error: {exc!r}")
+        return user32.CallNextHookEx(None, code, wparam, lparam)
+
+    @staticmethod
+    def explorer_target():
+        if any(key_down(vk) for vk in MODIFIER_VKS):
+            return None
+        fg = user32.GetForegroundWindow()
+        if not fg or class_name(fg) not in EXPLORER_CLASSES:
+            return None
+        focus = focused_class(fg)
+        if focus not in FILE_LIST_FOCUS:
+            return None
+        return fg
+
+    def run(self):
+        hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self.proc,
+                                        kernel32.GetModuleHandleW(None), 0)
+        if not hook:
+            log(f"could not install keyboard hook (error {ctypes.GetLastError()})")
+            return
+        msg = wt.MSG()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+
+
+# ----------------------------------------------------- reading the selection ---
+
+class Selection:
+    """Reads the selected files of an Explorer window or the desktop via COM."""
+
+    SWC_DESKTOP, SWFO_NEEDDISPATCH = 8, 1
+
+    def __init__(self):
+        self.shell = comtypes.client.CreateObject("Shell.Application", dynamic=True)
+        shdocvw = comtypes.client.GetModule("shdocvw.dll")
+        self.windows = comtypes.client.CreateObject(
+            shdocvw.ShellWindows, interface=shdocvw.IShellWindows)
+
+    def files(self, hwnd):
+        if class_name(hwnd) in ("Progman", "WorkerW"):
+            view = self.desktop_view()
+        else:
+            view = self.explorer_view(hwnd)
+        if view is None:
+            return []
+        paths = [item.Path for item in view.Document.SelectedItems()]
+        return [p for p in paths if os.path.isfile(p)]
+
+    def desktop_view(self):
+        found = self.windows.FindWindowSW(0, 0, self.SWC_DESKTOP, self.SWFO_NEEDDISPATCH)
+        disp = found[1] if isinstance(found, tuple) else found
+        return comtypes.client.dynamic.Dispatch(disp)
+
+    def explorer_view(self, hwnd):
+        # Each Explorer tab is its own "window" but they share one HWND; the
+        # title bar shows the active tab's folder name, so match on that.
+        title = window_title(hwnd)
+        tabs = []
+        wins = self.shell.Windows()
+        for i in range(wins.Count):
+            w = wins.Item(i)
+            try:
+                if w is not None and int(w.HWND) == int(hwnd):
+                    tabs.append(w)
+            except Exception:
+                continue
+        for w in tabs:
+            if title.startswith(w.LocationName):
+                return w
+        return tabs[0] if tabs else None
 
 
 # ------------------------------------------------------------- converting ---
@@ -206,112 +369,125 @@ def convert(src, ext):
 
 class ShiftDrop:
     def __init__(self):
-        self.root = TkinterDnD.Tk()
+        self.root = tk.Tk()
         self.root.withdraw()
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.attributes("-alpha", 0.96)
         self.root.configure(bg=BG)
 
-        self.tiles = []  # (frame, label, ext, kinds)
-        self.status = tk.Label(self.root, text="Drop on a format", bg=BG, fg=FG_OFF,
+        self.status = tk.Label(self.root, text="", bg=BG, fg=FG_OFF,
                                font=("Segoe UI", 9))
         self.status.grid(row=0, column=0, columnspan=5, pady=(8, 2))
+        self.tiles = []  # (label, ext, kinds)
         for i, (name, ext, kinds) in enumerate(TARGETS):
             lbl = tk.Label(self.root, text=name, width=6, height=2, bg=TILE, fg=FG,
-                           font=("Segoe UI Semibold", 11))
+                           font=("Segoe UI Semibold", 11), cursor="hand2")
             lbl.grid(row=1 + i // 5, column=i % 5, padx=4, pady=4)
-            lbl.drop_target_register(DND_FILES)
-            lbl.dnd_bind("<<DropEnter>>", lambda e, l=lbl, k=kinds: self.on_enter(e, l, k))
-            lbl.dnd_bind("<<DropPosition>>", lambda e: "copy")
-            lbl.dnd_bind("<<DropLeave>>", lambda e, l=lbl: self.on_leave(l))
-            lbl.dnd_bind("<<Drop>>", lambda e, x=ext, k=kinds: self.on_drop(e, x, k))
+            lbl.bind("<Enter>", lambda e, l=lbl: self.on_hover(l, True))
+            lbl.bind("<Leave>", lambda e, l=lbl: self.on_hover(l, False))
+            lbl.bind("<ButtonRelease-1>", lambda e, x=ext: self.on_pick(x))
             self.tiles.append((lbl, ext, kinds))
-        tk.Frame(self.root, height=6, bg=BG).grid(row=3, column=0)
+        tk.Label(self.root, text="Esc to close", bg=BG, fg=FG_OFF,
+                 font=("Segoe UI", 8)).grid(row=3, column=0, columnspan=5, pady=(0, 6))
 
+        self.selection = Selection()
+        self.pending_hwnd = None   # set by the hook thread, read by poll()
+        self.pending_close = False
+        self.files = []
+        self.enabled = set()
         self.visible = False
-        self.press_pos = None
-        self.press_ok = False
         self.was_down = False
-        self.busy = 0
-        self.hide_job = None
         self.toast = None
 
+        HotkeyHook(self.request, self.request_close).start()
         self.root.after(POLL_MS, self.poll)
 
-    # --- show / hide driven by polling the mouse + Shift state ---
+    # --- hotkey -> picker ---
+
+    # these two run on the hook thread: just hand over, never touch Tk/COM there
+    def request(self, hwnd):
+        self.pending_hwnd = hwnd
+
+    def request_close(self):
+        self.pending_close = True
 
     def poll(self):
-        down = key_down(VK_LBUTTON)
-        if down and not self.was_down:  # button just pressed
-            self.press_pos = cursor_pos()
-            self.press_ok = window_class_at(*self.press_pos) in DRAG_SOURCE_CLASSES
-        if down and self.press_ok and not self.visible and key_down(VK_SHIFT):
-            x, y = cursor_pos()
-            px, py = self.press_pos
-            if abs(x - px) + abs(y - py) >= MIN_DRAG_PX:
-                self.show(x, y)
-        if not down and self.was_down and self.visible:
-            # let a pending OLE drop reach us before the window goes away
-            self.hide_job = self.root.after(400, self.hide)
-        self.was_down = down
+        hwnd, self.pending_hwnd = self.pending_hwnd, None
+        close, self.pending_close = self.pending_close, False
+        if hwnd:
+            if self.visible:
+                self.hide()  # pressing Q again closes it
+            else:
+                self.open_for(hwnd)
+        if self.visible:
+            down = key_down(VK_LBUTTON)
+            if close:
+                self.hide()
+            elif down and not self.was_down and not self.cursor_inside():
+                self.hide()  # clicked somewhere else
+            self.was_down = down
         self.root.after(POLL_MS, self.poll)
 
+    def open_for(self, hwnd):
+        try:
+            files = self.selection.files(hwnd)
+        except Exception as exc:
+            log(f"reading selection failed: {exc!r}")
+            self.notify("Couldn't read the selected files", error=True)
+            return
+        if not files:
+            self.notify("Select a file first, then press Q")
+            return
+        self.files = files
+        kinds = {kind_of(p) for p in files}
+        exts = {os.path.splitext(p)[1].lower().replace(".jpeg", ".jpg") for p in files}
+        # a format is offered if every file can become it and it isn't what
+        # they all already are
+        self.enabled = {ext for _n, ext, ok in TARGETS
+                        if None not in kinds and kinds <= ok and exts != {ext}}
+        for lbl, ext, _kinds in self.tiles:
+            on = ext in self.enabled
+            lbl.configure(bg=TILE if on else TILE_OFF, fg=FG if on else FG_OFF,
+                          cursor="hand2" if on else "arrow")
+        name = os.path.basename(files[0])
+        label = name if len(files) == 1 else f"{len(files)} files selected"
+        if not self.enabled:
+            label += " - can't convert this type"
+        self.status.configure(text=label)
+        self.show(*cursor_pos())
+
     def show(self, x, y):
-        if self.hide_job:
-            self.root.after_cancel(self.hide_job)
-            self.hide_job = None
-        for lbl, _ext, _kinds in self.tiles:
-            lbl.configure(bg=TILE, fg=FG)
-        self.status.configure(text="Drop on a format", fg=FG_OFF)
         self.root.update_idletasks()
         w, h = self.root.winfo_reqwidth(), self.root.winfo_reqheight()
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        # sit just above-right of the cursor so the drag isn't covered at once
-        nx = min(max(x + 30, 0), sw - w)
-        ny = min(max(y - h - 30, 0), sh - h)
+        nx = min(max(x - w // 2, 0), sw - w)
+        ny = min(max(y + 16, 0), sh - h)
         self.root.geometry(f"+{nx}+{ny}")
         self.root.deiconify()
         self.root.lift()
         self.visible = True
+        self.was_down = key_down(VK_LBUTTON)
 
     def hide(self):
-        self.hide_job = None
         self.root.withdraw()
         self.visible = False
 
-    # --- drag-and-drop handlers ---
+    def cursor_inside(self):
+        x, y = cursor_pos()
+        rx, ry = self.root.winfo_rootx(), self.root.winfo_rooty()
+        return rx <= x < rx + self.root.winfo_width() and ry <= y < ry + self.root.winfo_height()
 
-    def paths(self, event):
-        try:
-            return [p for p in self.root.tk.splitlist(event.data) if os.path.isfile(p)]
-        except (tk.TclError, TypeError):
-            return []
+    def on_hover(self, lbl, inside):
+        for tile, ext, _kinds in self.tiles:
+            if tile is lbl and ext in self.enabled:
+                tile.configure(bg=TILE_HOT if inside else TILE)
 
-    def on_enter(self, event, lbl, kinds):
-        files = self.paths(event)
-        ok = not files or all(kind_of(p) in kinds for p in files)
-        lbl.configure(bg=TILE_HOT if ok else TILE_OFF, fg=FG if ok else FG_OFF)
-        return "copy" if ok else "refuse_drop"
-
-    def on_leave(self, lbl):
-        lbl.configure(bg=TILE, fg=FG)
-
-    def on_drop(self, event, ext, kinds):
-        # Explorer is blocked inside its drag-and-drop call until this returns,
-        # so answer at once and do the window work (hide, toast) afterwards.
-        files = self.paths(event)
-        if not files:
-            return "refuse_drop"
-        bad = [p for p in files if kind_of(p) not in kinds]
-        if bad:
-            msg = f"Can't make {ext[1:].upper()} from {os.path.basename(bad[0])}"
-            self.root.after(150, self.notify, msg, True)
-            return "refuse_drop"
-        self.root.after(150, self.start_work, files, ext)
-        return "copy"  # never "move" - the original stays where it was
-
-    def start_work(self, files, ext):
+    def on_pick(self, ext):
+        if ext not in self.enabled:
+            return
+        files = self.files
+        self.hide()
         self.notify(f"Converting {len(files)} file(s) to {ext[1:].upper()}...")
         threading.Thread(target=self.work, args=(files, ext), daemon=True).start()
 
@@ -323,6 +499,7 @@ class ShiftDrop:
             except Exception as exc:  # report every failure, keep going
                 errors.append(f"{os.path.basename(path)}: {exc}")
         if errors:
+            log("conversion errors: " + " | ".join(errors))
             msg, err = "\n".join(errors[:3]), True
         elif len(done) == 1:
             msg, err = "Saved " + os.path.basename(done[0]), False

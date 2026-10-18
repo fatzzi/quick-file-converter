@@ -24,7 +24,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 echo Installing packages...
 ".venv\Scripts\python.exe" -m pip install --disable-pip-version-check -q -r requirements.txt || goto :fail
-".venv\Scripts\python.exe" -c "import PIL, pillow_heif, tkinterdnd2" || goto :fail
+".venv\Scripts\python.exe" -c "import PIL, pillow_heif, comtypes.client" || goto :fail
 echo Packages OK.
 
 if defined QUIET goto :done
@@ -46,7 +46,7 @@ if not errorlevel 2 (
 
 call "%~dp0start.bat"
 echo.
-echo ShiftDrop is running. Shift-drag a file in File Explorer to try it.
+echo ShiftDrop is running. Select a file in File Explorer and press Q to try it.
 pause
 
 :done

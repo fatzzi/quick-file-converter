@@ -27,8 +27,8 @@ Documents don't need Microsoft Word:
   [LibreOffice](https://www.libreoffice.org/), running hidden in the
   background. `install.bat` offers to install it, or run
   `winget install TheDocumentFoundation.LibreOffice`.
-- The first document conversion after starting takes a few extra seconds
-  while LibreOffice starts up.
+- Document conversions take a few seconds each. The very first one after
+  installing LibreOffice can take about 30 seconds while it sets itself up.
 
 Q only opens the picker while Explorer's file list or the desktop is focused.
 Typing Q anywhere else - other apps, the Explorer address bar or search box,

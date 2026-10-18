@@ -1,4 +1,4 @@
-# ShiftDrop
+# Quick File Converter
 
 A tiny file converter for Windows that lives in File Explorer.
 **Select a file, press `Q`, click a format.** The converted copy appears right
@@ -55,34 +55,34 @@ You need **Windows 10 or 11**. Setup takes about 5 minutes.
 2. Run the installer and **tick "Add python.exe to PATH"** at the bottom of
    the first screen, then click **Install Now**.
 
-### 2. Download ShiftDrop
+### 2. Download Quick File Converter
 
 1. On this page, click the green **Code** button, then **Download ZIP**.
 2. Right-click the downloaded ZIP, choose **Properties**, tick **Unblock**
    (if you see it) and click **OK**. This stops Windows from warning about
    every file inside.
 3. Right-click the ZIP again and choose **Extract All...**. Put the folder
-   somewhere it can stay, for example `Documents\ShiftDrop`.
+   somewhere it can stay, for example `Documents\Quick File Converter`.
 
 Or, if you use git:
 
 ```
-git clone https://github.com/fatzzi/shiftdrop.git
+git clone https://github.com/fatzzi/quick-file-converter.git
 ```
 
 ### 3. Run the installer
 
 Open the folder and double-click **`install.bat`**. It will:
 
-1. Set up ShiftDrop's own Python environment (in a `.venv` folder) and
+1. Set up Quick File Converter's own Python environment (in a `.venv` folder) and
    install what it needs. Takes a minute or two.
 2. Ask to install **ffmpeg** (free) - say **Y** if you want to convert videos
    and audio.
 3. Ask to install **LibreOffice** (free, about 350 MB) - say **Y** if you want
    to turn Word documents into PDFs. PDF to Word works without it.
-4. Ask whether ShiftDrop should **start with Windows** - say **Y** so it's
+4. Ask whether Quick File Converter should **start with Windows** - say **Y** so it's
    always ready.
-5. Start ShiftDrop.
+5. Start Quick File Converter.
 
 If Windows shows **"Windows protected your PC"**, click **More info → Run
 anyway**. It appears because the file came from the internet.
@@ -91,19 +91,19 @@ anyway**. It appears because the file came from the internet.
 
 Open File Explorer, click any photo or document, and press **`Q`**.
 
-ShiftDrop has no window or taskbar icon: it waits quietly in the background
+Quick File Converter has no window or taskbar icon: it waits quietly in the background
 until you press `Q`.
 
 ## Everyday use
 
 | File | What it does |
 |---|---|
-| `start.bat` | start ShiftDrop (if it isn't set to start with Windows) |
+| `start.bat` | start Quick File Converter (if it isn't set to start with Windows) |
 | `stop.bat` | stop it |
 | `uninstall.bat` | stop it and remove it from Windows startup |
 | `install.bat` | run again after moving the folder, or to add ffmpeg / LibreOffice later |
 
-To remove ShiftDrop completely, run `uninstall.bat` and then delete the folder.
+To remove Quick File Converter completely, run `uninstall.bat` and then delete the folder.
 
 ## Good to know
 
@@ -117,21 +117,21 @@ To remove ShiftDrop completely, run `uninstall.bat` and then delete the folder.
   one after installing LibreOffice can take about 30 seconds.
 - **Video and audio** use [ffmpeg](https://ffmpeg.org/).
 - **Want a different key than `Q`?** Change `HOTKEY_VK` near the top of
-  `shiftdrop.py` (for example `0x43` for C), then run `stop.bat` and
+  `quick_file_converter.py` (for example `0x43` for C), then run `stop.bat` and
   `start.bat`.
-- If something goes wrong, details are written to `shiftdrop.log` in the
-  ShiftDrop folder.
+- If something goes wrong, details are written to `quick_file_converter.log` in the
+  Quick File Converter folder.
 
 ## Files
 
-- `shiftdrop.py` - the whole app (Q hotkey, format picker, converters)
+- `quick_file_converter.py` - the whole app (Q hotkey, format picker, converters)
 - `requirements.txt` - Python packages: Pillow, pillow-heif, comtypes, pdf2docx
 - `install.bat`, `start.bat`, `stop.bat`, `uninstall.bat` - the helpers above
 - `docs/` - the screenshots in this README
 
 ## License
 
-ShiftDrop is released under the [MIT License](LICENSE): use it, change it and
+Quick File Converter is released under the [MIT License](LICENSE): use it, change it and
 share it freely. The tools it installs and runs (Pillow, pillow-heif, comtypes,
 pdf2docx and its PyMuPDF dependency, ffmpeg, LibreOffice) are separate
 projects under their own licences.

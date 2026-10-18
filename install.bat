@@ -1,6 +1,6 @@
 @echo off
-rem ShiftDrop setup: creates .venv, installs the Python packages, and optionally
-rem installs ffmpeg and adds ShiftDrop to Windows startup.
+rem Quick File Converter setup: creates .venv, installs the Python packages, and optionally
+rem installs ffmpeg and adds Quick File Converter to Windows startup.
 rem   install.bat          interactive
 rem   install.bat /quiet   packages only, no questions, does not start the app
 setlocal
@@ -49,15 +49,15 @@ if not defined HAVE_LO (
 )
 
 echo.
-choice /c YN /m "Start ShiftDrop automatically when you sign in to Windows"
+choice /c YN /m "Start Quick File Converter automatically when you sign in to Windows"
 if not errorlevel 2 (
-    powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Startup')+'\ShiftDrop.lnk'); $s.TargetPath='%~dp0.venv\Scripts\pythonw.exe'; $s.Arguments='\"%~dp0shiftdrop.py\"'; $s.WorkingDirectory='%~dp0'; $s.Save()"
+    powershell -NoProfile -Command "$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Startup')+'\Quick File Converter.lnk'); $s.TargetPath='%~dp0.venv\Scripts\pythonw.exe'; $s.Arguments='\"%~dp0quick_file_converter.py\"'; $s.WorkingDirectory='%~dp0'; $s.Save()"
     echo Added to startup.
 )
 
 call "%~dp0start.bat"
 echo.
-echo ShiftDrop is running. Select a file in File Explorer and press Q to try it.
+echo Quick File Converter is running. Select a file in File Explorer and press Q to try it.
 pause
 
 :done

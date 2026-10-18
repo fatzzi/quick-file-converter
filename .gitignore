@@ -2,4 +2,4 @@
 __pycache__/
 *.pyc
 test/
-shiftdrop.log
+quick_file_converter.log

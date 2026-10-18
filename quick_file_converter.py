@@ -1,12 +1,12 @@
-"""ShiftDrop - select files in Explorer, press Q, click a format to convert them.
+"""Quick File Converter - select files in Explorer, press Q, click a format.
 
 Runs in the background. Select one or more files in File Explorer or on the
 desktop and press Q: a format picker pops up at the mouse. Click a format and
 converted copies are written next to the originals (the originals are untouched).
 Esc or a click anywhere else closes the picker.
 
-    pythonw shiftdrop.py          start (no console)
-    python  shiftdrop.py --quit   stop a running instance
+    pythonw quick_file_converter.py           start (no console)
+    python  quick_file_converter.py --quit    stop a running instance
 """
 
 import ctypes
@@ -45,7 +45,7 @@ EXPLORER_CLASSES = {"CabinetWClass", "ExploreWClass", "Progman", "WorkerW"}
 FILE_LIST_FOCUS = {"DirectUIHWND", "SysListView32"}
 POLL_MS = 30
 CONTROL_PORT = 47821      # localhost port used for single-instance / --quit
-LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shiftdrop.log")
+LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quick_file_converter.log")
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff",
              ".ico", ".heic", ".heif"}
@@ -359,7 +359,7 @@ def find_soffice():
 # LibreOffice keeps its settings here, apart from any LibreOffice you have
 # open yourself, so a conversion never collides with it.
 LO_PROFILE = os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()),
-                          "ShiftDrop", "libreoffice-profile")
+                          "Quick File Converter", "libreoffice-profile")
 LO_FILTERS = {".pdf": "pdf", ".docx": "docx:MS Word 2007 XML"}
 
 
@@ -394,7 +394,7 @@ def convert_office(src, dst, ext):
     """PDF -> DOCX with pdf2docx; DOC/DOCX/RTF/ODT -> PDF or DOCX with LibreOffice."""
     # both tools pick the format from the file name, so work in a temp folder
     # under real names and move the result into place at the end
-    out_dir = tempfile.mkdtemp(prefix="shiftdrop-")
+    out_dir = tempfile.mkdtemp(prefix="quick-file-converter-")
     try:
         if kind_of(src) == "pdf":
             out = os.path.join(out_dir, "out.docx")
@@ -441,7 +441,7 @@ def convert(src, ext):
 
 # --------------------------------------------------------------------- UI ---
 
-class ShiftDrop:
+class App:
     def __init__(self):
         self.root = tk.Tk()
         self.root.withdraw()
@@ -641,7 +641,7 @@ def main():
         return  # already running
     except OSError:
         pass
-    app = ShiftDrop()
+    app = App()
     serve_control(app)
     app.run()
 

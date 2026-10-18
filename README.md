@@ -128,3 +128,10 @@ To remove ShiftDrop completely, run `uninstall.bat` and then delete the folder.
 - `requirements.txt` - Python packages: Pillow, pillow-heif, comtypes, pdf2docx
 - `install.bat`, `start.bat`, `stop.bat`, `uninstall.bat` - the helpers above
 - `docs/` - the screenshots in this README
+
+## License
+
+ShiftDrop is released under the [MIT License](LICENSE): use it, change it and
+share it freely. The tools it installs and runs (Pillow, pillow-heif, comtypes,
+pdf2docx and its PyMuPDF dependency, ffmpeg, LibreOffice) are separate
+projects under their own licences.
